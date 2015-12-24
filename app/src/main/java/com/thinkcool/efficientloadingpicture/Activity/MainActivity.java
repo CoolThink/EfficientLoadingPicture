@@ -47,6 +47,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         setSupportActionBar(toolbar);
         init();
         mTakePhoneButton.setOnClickListener(this);
+        int w = mPreviewImageView.getWidth();
+        int h = mPreviewImageView.getHeight();
     }
 
     private void init() {
@@ -94,17 +96,20 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     //不处理直接加载
 //                    bitmap = BitmapFactory.decodeFile(photoPath);
                     //缩放后加载:从file中加载
-                    bitmap = BitmapUtils.getFitSampleBitmap(photoPath,
-                            requestWidth, requestHeight);
-                    //缩放后加载:从inputStream中加载
-//                    try {
-//                        bitmap = BitmapUtils.getFitSampleBitmap(getContentResolver().openInputStream(imageUri),
-//                                requestWidth, requestHeight);
-//                    } catch (Exception e) {
-//                        e.printStackTrace();
-//                    }
-                    //缩放后加载:从resources中加载
+//                    bitmap = BitmapUtils.getFitSampleBitmap(photoPath,
+//                            requestWidth, requestHeight);
+                    //缩放后加载:模拟从网络的inputStream中加载,利用的是将其转化为file后在decode
+                    try {
+                        String tempPath = Environment.getExternalStorageDirectory() + "/temp.jpg";
+                        bitmap = BitmapUtils.getFitSampleBitmap(getContentResolver().openInputStream(imageUri),
+                                tempPath, requestWidth, requestHeight);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+//                  缩放后加载:从resources中加载
 //                    bitmap = BitmapUtils.getFitSampleBitmap(getResources(), R.drawable.res_img, requestWidth, requestHeight);
+
+
                     mPreviewImageView.setImageBitmap(bitmap);
 
                 }
@@ -112,3 +117,4 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
     }
 }
+
