@@ -1,5 +1,4 @@
-# EfficientLoadingPicture
-博客地址:http://blog.csdn.net/ys408973279/article/details/50269593
+**博客地址:http://blog.csdn.net/ys408973279/article/details/50269593**
 **图像加载的方式:**
 &#160; &#160; &#160; &#160;Android开发中消耗内存较多一般都是在图像上面，本文就主要介绍怎样正确的展现图像减少对内存的开销，有效的避免oom现象。
 首先我们知道我的获取图像的来源一般有三种源头:
@@ -41,6 +40,12 @@ decodeFile,decodeResource,这三个函数来获取到bitmap然后再调用ImageV
 &#160; &#160; &#160; &#160;inSampleSize:表示对图像像素的缩放比例。假设值为2，表示decode后的图像的像素为原图像的1/2。在上面的代码里我们封装了个简单的getFitInSampleSize函数（将传入的option.outWidth和option.outHeight与控件的width和height对应相除再取其中较小的值）来获取一个适当的inSampleSize。
 &#160; &#160; &#160; &#160;在设置了option的inSampleSize后我们将inJustDecodeBounds设置为false再次调用decode函数时就能生成bitmap了。
 
+这里需要注意的是如果我们decodeFile解析的文件是外部存储里的文件,我们需要在Manifists加上文件的读写权限,不然获取的bitmap会为null.
+```
+ <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+```
+
 同理我们编写decodeResource的重载函数
 ```
  public static Bitmap getFitSampleBitmap(Resources resources, int resId, int width, int height) {
@@ -52,15 +57,15 @@ decodeFile,decodeResource,这三个函数来获取到bitmap然后再调用ImageV
         return BitmapFactory.decodeResource(resources, resId, options);
     }
 ```
-这里需要注意的是如果我们decodeFile解析的文件是外部存储里的文件,我们需要在Manifists加上文件的读写权限,不然获取的bitmap会为null.
 
-```
- <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-```
 
-然后是decodeStream的相关重载:
+&#160; &#160; &#160; &#160;对于decodeStream重载，和从file中加载和从resource中加载稍有不同，因对stream是一种有顺序的字符流，对其decode一次后，其顺序就会发生变化，再次进行第二次decode的时候就不能解码成功了，这也是为什么当我们对inputStream decode两次的时候会得到一个null值的bitmap的原因。
 
+&#160; &#160; &#160; &#160;所以我们对stream类型的源需要进行转换，转换有两种思路:
+1. 将inputStream的字节流读取后放到一个byte[]数组里，然后使用BitmapFactory.decodeByteArray两次decode进行压缩——但是发现这种方法其实治标不治本，不建议使用。具体原因接下来会介绍。
+2. 将inputStream的字节流读取到一个文件里，然后通过处理file的方式来进行处理即可——推荐，好处多，后面介绍。
+
+1.通过decodeByteArray的形式：
 ```
 public static Bitmap getFitSampleBitmap(InputStream inputStream, int width, int height) throws Exception {
         BitmapFactory.Options options = new BitmapFactory.Options();
@@ -89,8 +94,44 @@ public static Bitmap getFitSampleBitmap(InputStream inputStream, int width, int 
         return outStream.toByteArray();
     }
 ```
-&#160; &#160; &#160; &#160;我们发现在处理stream的时候我们并不是同之前一样通过调用两次decodeStream函数来进行设置的，而是将stream转化成byte[],然后在两次调用decodeByteArray。其原因是:如果我们两次调用按照两次调用decodeStream的方式，会发现我们得到到bitmap为null（算是android的bug吧）。
+&#160; &#160; &#160; &#160;我们发现这里的处理方式大致一看还可以，然后我们会发现在readStream函数中会返回一个byte[]数组，在这个数组的大小即为原始图像的大小，因此并没有起到节省内存的效果。
 
+因此推荐使用第二中方式通过保存本地文件后再解码
+
+```
+ public static Bitmap getFitSampleBitmap(InputStream inputStream, String catchFilePath,int width, int height) throws Exception {
+        return getFitSampleBitmap(catchStreamToFile(catchFilePath, inputStream), width, height);
+    }
+    /*
+       * 将inputStream中字节流保存至文件
+       * */
+    public static String catchStreamToFile(String catchFile,InputStream inStream) throws Exception {
+
+        File tempFile=new File(catchFile);
+        try {
+            if (tempFile.exists()) {
+                tempFile.delete();
+            }
+            tempFile.createNewFile();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        FileOutputStream fileOutputStream=new FileOutputStream(tempFile);
+        byte[] buffer = new byte[1024];
+        int len = 0;
+        while ((len = inStream.read(buffer)) != -1) {
+            fileOutputStream.write(buffer, 0, len);
+        }
+        inStream.close();
+        fileOutputStream.close();
+        return catchFile;
+    }
+```
+&#160; &#160; &#160; &#160;这里我们可以看到，我们通过调用catchStreamToFile先将文件保存到指定文件名里，然后再利用两次decodeFile的形式来处理stream流的。
+这样做的好处是什么呢：
+1.避免了超大的中间内存变量的生成，所以自然就避免了oom现象。
+2.对于从file和resource中加载图片其本质都是从文件中加载图片的。
+3.一般inputStream都是应用于网络中获取图片的方式，我们采用了用文件进行缓存的方式进行图片加载还有效的避免了来回切换activity页面时多次从网络中下载同一种图片，从而造成的卡顿现象，使用这种方法，我们加载一次后，再进行第二次加载时，我们可以判断下是否是和第一次加载时的url是一致的，如果是那么直接从使用getFitSampleBitmap file的重载从第一次缓存的catchfile中加载即可，这样大大提高了加载速度(在主程序里我们可以用一个map变量保存下url和catchFileName的对应关系)。
 **内存对比**
 &#160; &#160; &#160; &#160;这样我们加载相关代码就完成了，最后我们通过一个demo来对比下正确加载图像和不处理的加载图像时的内存消耗吧，这里我们就写一个手机拍摄头像的程序吧。
 
@@ -224,7 +265,14 @@ Bitmap bitmap = null;
 拍摄照片后:
 ![这里写图片描述](http://img.blog.csdn.net/20151212140716275)
 
-&#160; &#160; &#160; &#160;相信看到内存对比图后也不用我再多说什么了吧，最后将所有代码上传至GitHub:包含了所以加载函数，还有拍摄相机的demo，其中github里的代码比文章里的要多一些，里面还分别测试了从stream里和rersouces里加载图片
+我们可以大致计算下，在没有采用压缩方式处理的时候:
+图片分辨率为4032×3024采用的是RGB_8888编码:即每个像素点占用4个字节，因此加载一张高清图片所用到的内存大小=4032×3024×4/1024/1024=40+M.
+
+而采用正确的加载方式呢(其屏幕显示效果一致):
+图片所用到的内存大小=263×263×4/1024/1024=0.26M.
+
+最后将所有代码上传至GitHub:包含了所以加载函数，还有拍摄相机的demo，其中github里的代码比文章里的要多一些，里面还分别测试了从stream里和rersouces里加载图片
 ps:对于不同手机运行直接加载图像方式的时候可能会不能正在运行,直接就oom了。
 地址:https://github.com/CoolThink/EfficientLoadingPicture.git（欢迎加星或fork）
 
+最后感谢github上xumengyin对inputStream加载方式的询问，才有了我第二次对文章的修该，欢迎大家点多多关注我的博客，对应文章的提问我都会尽量及时回答和修改我不对的地方。
